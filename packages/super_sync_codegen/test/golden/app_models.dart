@@ -105,11 +105,42 @@ void registerSuperSyncModels(SuperSync sync) {
   sync.register(MessageSyncAdapter());
 }
 
+/// Builds a fully-wired [AppSync] in one call: constructs
+/// SuperSync, registers every model, starts it and returns the
+/// typed facade. The whole data layer in one line.
+Future<AppSync> openAppSync({
+  required SyncLocalStore store,
+  required SyncRemote remote,
+  ConflictStrategy conflictStrategy = ConflictStrategy.serverWins,
+  SyncConfig config = const SyncConfig(),
+  bool autoSync = true,
+}) async {
+  final sync = SuperSync(
+    store: store,
+    remote: remote,
+    conflictStrategy: conflictStrategy,
+    config: config,
+    autoSync: autoSync,
+  );
+  registerSuperSyncModels(sync);
+  await sync.start();
+  return AppSync(sync);
+}
+
 /// A single typed entry point over every generated model.
 class AppSync {
   AppSync(this.sync);
 
   final SuperSync sync;
+
+  /// The live sync status (phase, pending, dead-lettered).
+  Stream<SyncStatus> get status => sync.status;
+
+  /// Runs one full sync cycle now.
+  Future<void> syncNow() => sync.sync();
+
+  /// Closes the engine and the underlying store.
+  Future<void> dispose() => sync.dispose();
 
   SyncRepository<Todo> get todos => sync.repository<Todo>();
   SyncRepository<User> get users => sync.repository<User>();

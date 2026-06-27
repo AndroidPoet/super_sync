@@ -207,16 +207,52 @@ void _emitRegistration(StringBuffer b, List<_Model> models) {
     ..writeln('}')
     ..writeln();
 
+  // One-call setup: build + register + start, return the typed facade.
+  b
+    ..writeln('/// Builds a fully-wired [AppSync] in one call: constructs')
+    ..writeln('/// SuperSync, registers every model, starts it and returns the')
+    ..writeln('/// typed facade. The whole data layer in one line.')
+    ..writeln('Future<AppSync> openAppSync({')
+    ..writeln('  required SyncLocalStore store,')
+    ..writeln('  required SyncRemote remote,')
+    ..writeln(
+      '  ConflictStrategy conflictStrategy = ConflictStrategy.serverWins,',
+    )
+    ..writeln('  SyncConfig config = const SyncConfig(),')
+    ..writeln('  bool autoSync = true,')
+    ..writeln('}) async {')
+    ..writeln('  final sync = SuperSync(')
+    ..writeln('    store: store,')
+    ..writeln('    remote: remote,')
+    ..writeln('    conflictStrategy: conflictStrategy,')
+    ..writeln('    config: config,')
+    ..writeln('    autoSync: autoSync,')
+    ..writeln('  );')
+    ..writeln('  registerSuperSyncModels(sync);')
+    ..writeln('  await sync.start();')
+    ..writeln('  return AppSync(sync);')
+    ..writeln('}')
+    ..writeln();
+
   b
     ..writeln('/// A single typed entry point over every generated model.')
     ..writeln('class AppSync {')
     ..writeln('  AppSync(this.sync);')
     ..writeln()
     ..writeln('  final SuperSync sync;')
+    ..writeln()
+    ..writeln('  /// The live sync status (phase, pending, dead-lettered).')
+    ..writeln('  Stream<SyncStatus> get status => sync.status;')
+    ..writeln()
+    ..writeln('  /// Runs one full sync cycle now.')
+    ..writeln('  Future<void> syncNow() => sync.sync();')
+    ..writeln()
+    ..writeln('  /// Closes the engine and the underlying store.')
+    ..writeln('  Future<void> dispose() => sync.dispose();')
     ..writeln();
   for (final m in models) {
     final getter = _camel(_plural(m.wireType));
-    b..writeln(
+    b.writeln(
       '  SyncRepository<${m.className}> get $getter => '
       'sync.repository<${m.className}>();',
     );

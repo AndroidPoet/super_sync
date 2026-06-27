@@ -45,16 +45,13 @@ void main() {
     expect(generateFromOpenApi(spec), golden);
   });
 
-  test('generated models + AppSync drive the engine end to end', () async {
-    final sync = SuperSync(
+  test('openAppSync wires the whole layer in one call (in-memory)', () async {
+    // The entire data layer in one line: build + register + start + facade.
+    final app = await openAppSync(
       store: InMemorySyncLocalStore(),
       remote: _EchoRemote(),
       autoSync: false,
     );
-    registerSuperSyncModels(sync); // the single generated wiring call
-    await sync.start();
-
-    final app = AppSync(sync); // the single generated typed API
 
     await app.todos.save(
       const Todo(id: 't1', title: 'Buy milk', completed: false, tags: ['home']),
@@ -67,30 +64,27 @@ void main() {
     expect((await app.users.get('u1'))!.age, 30);
     expect((await app.messages.get('m1'))!.text, 'hi');
 
-    await sync.sync();
-    expect(sync.currentStatus.isFullySynced, isTrue);
-    await sync.dispose();
+    await app.syncNow();
+    expect(app.sync.currentStatus.isFullySynced, isTrue);
+    await app.dispose();
   });
 
-  test('generated models also run over the Drift (SQLite) store', () async {
-    // Same generated code, swapped onto the durable store — proving the output
-    // is store-agnostic and covers both the in-memory and Drift databases.
-    final sync = SuperSync(
+  test('openAppSync also runs over the Drift (SQLite) store', () async {
+    // Same one-call API, swapped onto the durable store — proving the generated
+    // layer covers both the in-memory and Drift databases unchanged.
+    final app = await openAppSync(
       store: DriftSyncLocalStore(SuperSyncDatabase(NativeDatabase.memory())),
       remote: _EchoRemote(),
       autoSync: false,
     );
-    registerSuperSyncModels(sync);
-    await sync.start();
 
-    final app = AppSync(sync);
     await app.todos.save(
       const Todo(id: 't1', title: 'Buy milk', completed: false, tags: ['home']),
     );
     expect((await app.todos.get('t1'))!.tags, ['home']);
-    await sync.sync();
-    expect(sync.currentStatus.isFullySynced, isTrue);
-    await sync.dispose();
+    await app.syncNow();
+    expect(app.sync.currentStatus.isFullySynced, isTrue);
+    await app.dispose();
   });
 
   test('throws when a schema has no id property', () {

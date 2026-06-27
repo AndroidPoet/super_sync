@@ -27,15 +27,25 @@ dart run super_sync_codegen:super_sync_gen openapi.yaml lib/app_models.g.dart
 
 ## Use the generated API
 
-```dart
-final sync = SuperSync(store: DriftSyncLocalStore(db), remote: MyRemote());
-registerSuperSyncModels(sync);     // one generated call wires every model
-await sync.start();
+The whole data layer in one call — works with any `SyncLocalStore`
+(in-memory, Drift/SQLite, …):
 
-final app = AppSync(sync);         // one generated typed entry point
+```dart
+final app = await openAppSync(
+  store: DriftSyncLocalStore(db), // or InMemorySyncLocalStore()
+  remote: MyRemote(),
+);
+
 await app.todos.save(const Todo(id: 't1', title: 'Buy milk', completed: false));
 app.users.watchAll();
+app.status.listen(print);
+await app.syncNow();
 ```
+
+`openAppSync` builds `SuperSync`, registers every model and starts it, returning
+an `AppSync` facade with a typed `SyncRepository` per model plus `status`,
+`syncNow()` and `dispose()`. Prefer to wire it yourself? `registerSuperSyncModels(sync)`
+and `AppSync(sync)` are also generated.
 
 ## Input
 
