@@ -1,7 +1,9 @@
 import 'dart:io';
 
+import 'package:drift/native.dart';
 import 'package:super_sync/super_sync.dart';
 import 'package:super_sync_codegen/super_sync_codegen.dart';
+import 'package:super_sync_drift/super_sync_drift.dart';
 import 'package:test/test.dart';
 
 import 'golden/app_models.dart';
@@ -65,6 +67,27 @@ void main() {
     expect((await app.users.get('u1'))!.age, 30);
     expect((await app.messages.get('m1'))!.text, 'hi');
 
+    await sync.sync();
+    expect(sync.currentStatus.isFullySynced, isTrue);
+    await sync.dispose();
+  });
+
+  test('generated models also run over the Drift (SQLite) store', () async {
+    // Same generated code, swapped onto the durable store — proving the output
+    // is store-agnostic and covers both the in-memory and Drift databases.
+    final sync = SuperSync(
+      store: DriftSyncLocalStore(SuperSyncDatabase(NativeDatabase.memory())),
+      remote: _EchoRemote(),
+      autoSync: false,
+    );
+    registerSuperSyncModels(sync);
+    await sync.start();
+
+    final app = AppSync(sync);
+    await app.todos.save(
+      const Todo(id: 't1', title: 'Buy milk', completed: false, tags: ['home']),
+    );
+    expect((await app.todos.get('t1'))!.tags, ['home']);
     await sync.sync();
     expect(sync.currentStatus.isFullySynced, isTrue);
     await sync.dispose();
