@@ -10,14 +10,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dart-lang/setup-dart@v1
+      # The workspace includes a Flutter example app, so resolve with Flutter
+      # (it bundles the Dart SDK used for the analyze/test steps below).
+      - uses: subosito/flutter-action@v2
         with:
-          sdk: stable
+          channel: stable
       - name: Install dependencies
-        run: dart pub get
+        run: flutter pub get
       - name: Verify formatting
-        run: dart format --output=none --set-exit-if-changed packages/super_sync/lib packages/super_sync/test
+        run: >-
+          dart format --output=none --set-exit-if-changed
+          packages/super_sync/lib packages/super_sync/test
+          packages/super_sync_drift/lib packages/super_sync_drift/test
       - name: Analyze
-        run: dart analyze packages/super_sync
-      - name: Run tests
+        run: dart analyze packages/super_sync packages/super_sync_drift
+      - name: Test core
         run: dart test packages/super_sync
+      - name: Test drift store
+        run: dart test packages/super_sync_drift
