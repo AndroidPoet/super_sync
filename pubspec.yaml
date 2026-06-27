@@ -19,5 +19,6 @@ workspace:
   - packages/super_sync
   - packages/super_sync/example
   - packages/super_sync_drift
+  - packages/super_sync_sqflite
   - packages/super_sync_codegen
   - apps/pokedex
