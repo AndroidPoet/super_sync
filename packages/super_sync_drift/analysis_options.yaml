@@ -1,0 +1,13 @@
+include: package:very_good_analysis/analysis_options.yaml
+
+analyzer:
+  exclude:
+    - "**.g.dart"
+
+linter:
+  rules:
+    comment_references: false
+    flutter_style_todos: false
+    lines_longer_than_80_chars: false
+    # Drift table column getters are self-describing; docs would be noise.
+    public_member_api_docs: false

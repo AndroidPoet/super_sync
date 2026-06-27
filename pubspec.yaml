@@ -1,0 +1,22 @@
+# Pub workspace root for Super Sync — a generic, offline-first sync engine.
+#
+# A monorepo (the drafter-flutter / supabase-kmp multi-module model) holding
+# several independently published packages that share one lockfile:
+#
+#   packages/super_sync           pure-Dart core engine (no Flutter)
+#   packages/super_sync_drift     Drift local store (later)
+#   packages/super_sync_rest      REST SyncRemote over Dio/http (later)
+#   packages/super_sync_flutter   app-lifecycle / connectivity triggers (later)
+#
+# Each package versions and releases on its own tag (super_sync-v*, ...).
+name: super_sync_workspace
+publish_to: none
+
+environment:
+  sdk: ^3.10.0
+
+workspace:
+  - packages/super_sync
+  - packages/super_sync/example
+  - packages/super_sync_drift
+  - apps/pokedex

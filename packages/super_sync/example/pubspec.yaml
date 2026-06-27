@@ -1,0 +1,15 @@
+name: super_sync_example
+description: Runnable examples for super_sync, including a live PokeAPI backend.
+publish_to: none
+
+environment:
+  sdk: ^3.10.0
+
+resolution: workspace
+
+dependencies:
+  http: ^1.2.0
+  super_sync:
+
+dev_dependencies:
+  very_good_analysis: ^10.0.0

@@ -1,0 +1,39 @@
+name: super_sync_drift
+description: >-
+  A durable, SQLite-backed local store for super_sync, built on Drift. Persists
+  records, the outbox and sync cursors across restarts.
+version: 0.1.0
+homepage: https://github.com/AndroidPoet/super_sync
+repository: https://github.com/AndroidPoet/super_sync
+issue_tracker: https://github.com/AndroidPoet/super_sync/issues
+
+topics:
+  - sync
+  - offline-first
+  - drift
+  - sqlite
+  - database
+
+environment:
+  sdk: ^3.10.0
+
+platforms:
+  android:
+  ios:
+  linux:
+  macos:
+  web:
+  windows:
+
+resolution: workspace
+
+dependencies:
+  drift: ^2.20.0
+  super_sync: ^0.1.0
+
+dev_dependencies:
+  build_runner: ^2.4.0
+  drift_dev: ^2.20.0
+  sqlite3: ^2.4.0
+  test: ^1.25.0
+  very_good_analysis: ^10.0.0

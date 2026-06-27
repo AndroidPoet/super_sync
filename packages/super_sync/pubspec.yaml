@@ -1,0 +1,39 @@
+name: super_sync
+description: >-
+  A generic, offline-first sync engine for Dart. Register any model through an
+  adapter, write locally, and synchronize through any backend. Pure Dart: no
+  Flutter, no backend lock-in.
+version: 0.1.0
+homepage: https://github.com/AndroidPoet/super_sync
+repository: https://github.com/AndroidPoet/super_sync
+issue_tracker: https://github.com/AndroidPoet/super_sync/issues
+documentation: https://github.com/AndroidPoet/super_sync#readme
+
+topics:
+  - sync
+  - offline-first
+  - database
+  - state-management
+  - persistence
+
+environment:
+  sdk: ^3.10.0
+
+# Pure Dart — runs everywhere Dart does.
+platforms:
+  android:
+  ios:
+  linux:
+  macos:
+  web:
+  windows:
+
+resolution: workspace
+
+dependencies:
+  meta: ^1.16.0
+  synchronized: ^3.3.0
+
+dev_dependencies:
+  test: ^1.25.0
+  very_good_analysis: ^10.0.0

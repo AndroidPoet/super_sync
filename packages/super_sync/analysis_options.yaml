@@ -1,0 +1,23 @@
+# Lint configuration for super_sync.
+#
+# Uses `very_good_analysis` — the strictest mainstream Dart lint set — and
+# relaxes only the handful of rules that fight a generic, JSON-shaped engine.
+include: package:very_good_analysis/analysis_options.yaml
+
+analyzer:
+  language:
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true
+
+linter:
+  rules:
+    # The engine deliberately catches broad transport failures and routes
+    # them to the retry / dead-letter path rather than crashing the caller.
+    avoid_catches_without_on_clauses: false
+    lines_longer_than_80_chars: false
+    # Dartdoc cross-references to other libraries in the package read fine.
+    comment_references: false
+    # Pure-Dart library, not a Flutter app: the Flutter TODO style is moot and
+    # mis-fires on model names like "Todo" in doc examples.
+    flutter_style_todos: false
