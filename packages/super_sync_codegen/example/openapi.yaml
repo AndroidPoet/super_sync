@@ -1,0 +1,41 @@
+openapi: 3.0.0
+info:
+  title: Sample API
+  version: 1.0.0
+paths: {}
+components:
+  schemas:
+    Todo:
+      type: object
+      required: [id, title, completed]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        completed:
+          type: boolean
+        tags:
+          type: array
+          items:
+            type: string
+    User:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        age:
+          type: integer
+    Message:
+      type: object
+      required: [id, text]
+      properties:
+        id:
+          type: string
+        text:
+          type: string
+        edited:
+          type: boolean

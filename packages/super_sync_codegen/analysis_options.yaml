@@ -1,0 +1,12 @@
+include: package:very_good_analysis/analysis_options.yaml
+
+linter:
+  rules:
+    comment_references: false
+    flutter_style_todos: false
+    lines_longer_than_80_chars: false
+    # The code emitter is a natural sequence of buffer writes; cascades would
+    # hurt readability here.
+    cascade_invocations: false
+    avoid_single_cascade_in_expression_statements: false
+    prefer_constructors_over_static_methods: false

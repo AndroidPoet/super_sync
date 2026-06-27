@@ -22,9 +22,14 @@ jobs:
           dart format --output=none --set-exit-if-changed
           packages/super_sync/lib packages/super_sync/test
           packages/super_sync_drift/lib packages/super_sync_drift/test
+          packages/super_sync_codegen/lib packages/super_sync_codegen/test
       - name: Analyze
-        run: dart analyze packages/super_sync packages/super_sync_drift
+        run: >-
+          dart analyze packages/super_sync packages/super_sync_drift
+          packages/super_sync_codegen
       - name: Test core
         run: dart test packages/super_sync
       - name: Test drift store
         run: dart test packages/super_sync_drift
+      - name: Test codegen
+        run: dart test packages/super_sync_codegen
