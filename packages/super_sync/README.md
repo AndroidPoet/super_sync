@@ -154,8 +154,9 @@ sync.status.listen((s) {
 | Package | Role |
 | --- | --- |
 | `super_sync` | pure-Dart core engine (this package) |
-| `super_sync_drift` | Drift local store for persistence at scale *(planned)* |
-| `super_sync_rest` | REST `SyncRemote` *(planned)* |
+| `super_sync_drift` | Drift/SQLite store — reactive query streams (recommended for persistence) |
+| `super_sync_sqflite` | sqflite/SQLite store — for apps already on the sqflite plugin |
+| `super_sync_codegen` | generate the whole data layer from an OpenAPI 3 spec |
 | `super_sync_flutter` | app-lifecycle & connectivity sync triggers *(planned)* |
 
 ## License
