@@ -100,9 +100,27 @@ class MessageSyncAdapter implements SyncEntityAdapter<Message> {
 
 /// Registers every generated model on [sync] in one call.
 void registerSuperSyncModels(SuperSync sync) {
-  sync.register(TodoSyncAdapter());
-  sync.register(UserSyncAdapter());
-  sync.register(MessageSyncAdapter());
+  sync.register(
+    TodoSyncAdapter(),
+    fields: const [
+      SyncField.text('title'),
+      SyncField.boolean('completed', indexed: true),
+    ],
+  );
+  sync.register(
+    UserSyncAdapter(),
+    fields: const [
+      SyncField.text('name'),
+      SyncField.integer('age'),
+    ],
+  );
+  sync.register(
+    MessageSyncAdapter(),
+    fields: const [
+      SyncField.text('text'),
+      SyncField.boolean('edited'),
+    ],
+  );
 }
 
 /// Builds a fully-wired [AppSync] in one call: constructs

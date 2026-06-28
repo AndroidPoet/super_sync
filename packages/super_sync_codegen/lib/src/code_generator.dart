@@ -45,6 +45,9 @@ String generateFromOpenApi(String source) {
               dartName: _camel(p.key as String),
               type: _DartType.from(p.value as YamlMap),
               required: required.contains(p.key),
+              projType: _projType(p.value as YamlMap),
+              indexed:
+                  p.value is YamlMap && (p.value as YamlMap)['x-index'] == true,
             ),
         ],
       ),
@@ -77,13 +80,33 @@ class _Field {
     required this.dartName,
     required this.type,
     required this.required,
+    this.projType,
+    this.indexed = false,
   });
   final String jsonKey;
   final String dartName;
   final _DartType type;
   final bool required;
 
+  /// The `SyncField.<name>` constructor to use, or `null` if not projectable
+  /// (arrays / objects stay in the blob only).
+  final String? projType;
+  final bool indexed;
+
   String get nullableType => required ? type.name : '${type.name}?';
+}
+
+/// Maps an OpenAPI scalar property to a [SyncField] constructor name, or `null`
+/// for non-scalar properties that can't become a typed column.
+String? _projType(YamlMap prop) {
+  if (prop.containsKey(r'$ref')) return null;
+  return switch (prop['type']) {
+    'string' => 'text',
+    'integer' => 'integer',
+    'number' => 'real',
+    'boolean' => 'boolean',
+    _ => null, // array / object
+  };
 }
 
 class _DartType {
@@ -201,7 +224,28 @@ void _emitRegistration(StringBuffer b, List<_Model> models) {
     ..writeln('/// Registers every generated model on [sync] in one call.')
     ..writeln('void registerSuperSyncModels(SuperSync sync) {');
   for (final m in models) {
-    b.writeln('  sync.register(${m.className}SyncAdapter());');
+    // Project every scalar field (except the id, which is already a column)
+    // into a typed, queryable column. A queryable store (e.g. Drift) builds
+    // the typed table automatically; other stores ignore it.
+    final projected = m.fields
+        .where((f) => f.dartName != 'id' && f.projType != null)
+        .toList();
+    if (projected.isEmpty) {
+      b.writeln('  sync.register(${m.className}SyncAdapter());');
+      continue;
+    }
+    b
+      ..writeln('  sync.register(')
+      ..writeln('    ${m.className}SyncAdapter(),')
+      ..writeln('    fields: const [');
+    for (final f in projected) {
+      final idx = f.indexed ? ', indexed: true' : '';
+      final key = f.jsonKey != f.dartName ? ", jsonKey: '${f.jsonKey}'" : '';
+      b.writeln("      SyncField.${f.projType}('${f.dartName}'$idx$key),");
+    }
+    b
+      ..writeln('    ],')
+      ..writeln('  );');
   }
   b
     ..writeln('}')

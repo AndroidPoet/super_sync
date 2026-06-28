@@ -15,6 +15,7 @@ components:
           type: string
         completed:
           type: boolean
+          x-index: true
         tags:
           type: array
           items:

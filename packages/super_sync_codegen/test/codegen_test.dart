@@ -87,6 +87,31 @@ void main() {
     await app.dispose();
   });
 
+  test(
+    'generated models are queryable by field over Drift (auto projection)',
+    () async {
+      final app = await openAppSync(
+        store: DriftSyncLocalStore(SuperSyncDatabase(NativeDatabase.memory())),
+        remote: _EchoRemote(),
+        autoSync: false,
+      );
+
+      await app.todos.save(
+        const Todo(id: 't1', title: 'A', completed: false, tags: []),
+      );
+      await app.todos.save(
+        const Todo(id: 't2', title: 'B', completed: true, tags: []),
+      );
+
+      // No fields were declared by hand — codegen emitted them from the schema,
+      // and start() built the typed table. Query by the indexed `completed`.
+      final open = await app.todos.query(where: 'completed = ?', args: [0]);
+      expect(open.map((t) => t.id), ['t1']);
+
+      await app.dispose();
+    },
+  );
+
   test('throws when a schema has no id property', () {
     const spec = '''
 openapi: 3.0.0
