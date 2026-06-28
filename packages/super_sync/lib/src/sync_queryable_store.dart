@@ -1,4 +1,5 @@
 import 'package:super_sync/src/sync_projection.dart';
+import 'package:super_sync/src/sync_query.dart';
 import 'package:super_sync/src/sync_record.dart';
 
 /// An optional capability a [SyncLocalStore] may also implement to support
@@ -12,22 +13,16 @@ import 'package:super_sync/src/sync_record.dart';
 ///
 /// `SyncLocalStore` is in `sync_local_store.dart`; a store implements both.
 abstract interface class SyncQueryableStore {
-  /// Creates or migrates the typed tables for [projections] and backfills them
-  /// from the existing records. Safe to call on every start; additive changes
-  /// are applied in place, incompatible ones rebuild the table from the blob.
+  /// Optionally pre-warms the typed columns for [projections] at startup, so the
+  /// first query on those fields doesn't pay the lazy materialization cost. This
+  /// is purely a performance hint — fields are materialized on demand anyway.
   Future<void> configureProjections(List<SyncProjection> projections);
 
-  /// Runs a query against [type]'s projected table and returns the matching
-  /// records (tombstones excluded).
+  /// Runs [spec] against [type] and returns the matching records (tombstones
+  /// excluded).
   ///
-  /// [where] / [orderBy] are raw SQL fragments over the projected column names;
-  /// [whereArgs] fills `?` placeholders in [where]. Throws [StateError] if
-  /// [type] has no configured projection.
-  Future<List<SyncRecord>> queryProjection(
-    String type, {
-    String? where,
-    List<Object?> whereArgs,
-    String? orderBy,
-    int? limit,
-  });
+  /// Any field referenced by the spec is materialized into an indexed column on
+  /// first use (backfilled from the JSON blob), so no schema declaration is
+  /// required. A spec with no field references reads straight from the blob.
+  Future<List<SyncRecord>> queryProjection(String type, SyncQuerySpec spec);
 }

@@ -104,8 +104,8 @@ void main() {
       );
 
       // No fields were declared by hand — codegen emitted them from the schema,
-      // and start() built the typed table. Query by the indexed `completed`.
-      final open = await app.todos.query(where: 'completed = ?', args: [0]);
+      // and start() pre-warmed the columns. Query by the indexed `completed`.
+      final open = await app.todos.where('completed', isEqualTo: false).get();
       expect(open.map((t) => t.id), ['t1']);
 
       await app.dispose();

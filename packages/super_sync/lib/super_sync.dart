@@ -17,6 +17,7 @@ export 'src/sync_mutation.dart';
 export 'src/sync_operation.dart';
 export 'src/sync_pager.dart';
 export 'src/sync_projection.dart';
+export 'src/sync_query.dart';
 export 'src/sync_queryable_store.dart';
 export 'src/sync_record.dart';
 export 'src/sync_remote.dart';

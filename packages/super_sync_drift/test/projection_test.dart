@@ -85,9 +85,10 @@ void main() {
 
       final open = await store.queryProjection(
         'todo',
-        where: 'done = ?',
-        whereArgs: [0],
-        orderBy: 'priority DESC',
+        const SyncQuerySpec(
+          conditions: [SyncCondition('done', SyncFilterOp.eq, false)],
+          orders: [SyncOrder('priority', descending: true)],
+        ),
       );
       expect(open.map((r) => r.id), ['c', 'a']);
 
@@ -120,7 +121,7 @@ void main() {
           const _Todo(id: 'b', title: 'B', done: true, priority: 3),
         );
 
-        final pending = await todos.query(where: 'done = ?', args: [0]);
+        final pending = await todos.where('done', isEqualTo: false).get();
         expect(pending.map((t) => t.id), ['a']);
         await db.dispose();
       },
@@ -140,7 +141,10 @@ void main() {
       await store.putRecord(
         _rec('a', {'id': 'a', 'title': 'A', 'done': false}),
       );
-      expect(await store.queryProjection('todo'), hasLength(1));
+      const onlyDone = SyncQuerySpec(
+        conditions: [SyncCondition('done', SyncFilterOp.notNull, null)],
+      );
+      expect(await store.queryProjection('todo', onlyDone), hasLength(1));
 
       await store.putRecord(
         _rec('a', {
@@ -149,102 +153,96 @@ void main() {
           'done': false,
         }).copyWith(deleted: true, localVersion: 2),
       );
-      expect(await store.queryProjection('todo'), isEmpty);
+      expect(await store.queryProjection('todo', onlyDone), isEmpty);
       await store.close();
     });
   });
 
-  group('automatic migration (no hand-written migration)', () {
-    test('additive: a new field backfills from the blob on reopen', () async {
-      final dir = await Directory.systemTemp.createTemp('supersync_proj_add');
-      final file = File('${dir.path}/db.sqlite');
-
-      // v1 of the model projects only `done`.
-      final first = DriftSyncLocalStore(
-        SuperSyncDatabase(NativeDatabase(file)),
+  group('lazy materialization (no schema, no migration)', () {
+    test('a never-declared field auto-projects from existing blobs', () async {
+      final store = DriftSyncLocalStore(
+        SuperSyncDatabase(NativeDatabase.memory()),
       );
-      await first.initialize();
-      await first.configureProjections([
-        const SyncProjection(
-          type: 'todo',
-          fields: [SyncField.boolean('done')],
-        ),
-      ]);
-      await first.putRecord(
+      await store.initialize();
+      // No configureProjections at all. Write data first...
+      await store.putRecord(
         _rec('a', {'id': 'a', 'title': 'A', 'done': false, 'priority': 7}),
       );
-      await first.close();
-
-      // v2 adds `priority`. No migration written; it backfills from the blob.
-      final second = DriftSyncLocalStore(
-        SuperSyncDatabase(NativeDatabase(file)),
+      await store.putRecord(
+        _rec('b', {'id': 'b', 'title': 'B', 'done': true, 'priority': 2}),
       );
-      await second.initialize();
-      await second.configureProjections([
-        const SyncProjection(
-          type: 'todo',
-          fields: [
-            SyncField.boolean('done'),
-            SyncField.integer('priority'),
-          ],
-        ),
-      ]);
-      final hits = await second.queryProjection(
+      // ...then query a field for the very first time: it materializes +
+      // backfills from the blob on demand.
+      final hits = await store.queryProjection(
         'todo',
-        where: 'priority = ?',
-        whereArgs: [7],
+        const SyncQuerySpec(
+          conditions: [SyncCondition('priority', SyncFilterOp.gte, 5)],
+        ),
       );
       expect(hits.single.id, 'a');
-      await second.close();
-      await dir.delete(recursive: true);
+      await store.close();
     });
 
-    test('incompatible: dropping a field rebuilds from the blob', () async {
-      final dir = await Directory.systemTemp.createTemp('supersync_proj_drop');
-      final file = File('${dir.path}/db.sqlite');
+    test(
+      'materialized fields persist across reopen; new fields add lazily',
+      () async {
+        final dir = await Directory.systemTemp.createTemp(
+          'supersync_proj_lazy',
+        );
+        final file = File('${dir.path}/db.sqlite');
 
-      final first = DriftSyncLocalStore(
-        SuperSyncDatabase(NativeDatabase(file)),
-      );
-      await first.initialize();
-      await first.configureProjections([
-        const SyncProjection(
-          type: 'todo',
-          fields: [
-            SyncField.boolean('done'),
-            SyncField.integer('priority'),
-          ],
-        ),
-      ]);
-      await first.putRecord(
-        _rec('a', {'id': 'a', 'title': 'A', 'done': true, 'priority': 4}),
-      );
-      await first.close();
+        final first = DriftSyncLocalStore(
+          SuperSyncDatabase(NativeDatabase(file)),
+        );
+        await first.initialize();
+        await first.putRecord(
+          _rec('a', {'id': 'a', 'title': 'A', 'done': false, 'priority': 7}),
+        );
+        // Materialize `done` by querying it.
+        await first.queryProjection(
+          'todo',
+          const SyncQuerySpec(
+            conditions: [SyncCondition('done', SyncFilterOp.eq, false)],
+          ),
+        );
+        await first.close();
 
-      // v2 removes `priority` -> incompatible -> table rebuilt from the blob.
-      final second = DriftSyncLocalStore(
-        SuperSyncDatabase(NativeDatabase(file)),
-      );
-      await second.initialize();
-      await second.configureProjections([
-        const SyncProjection(
-          type: 'todo',
-          fields: [SyncField.boolean('done')],
-        ),
-      ]);
-      final done = await second.queryProjection(
-        'todo',
-        where: 'done = ?',
-        whereArgs: [1],
-      );
-      expect(done.single.id, 'a');
-      // Querying the dropped column must now fail (it's gone from the table).
-      await expectLater(
-        second.queryProjection('todo', where: 'priority = ?', whereArgs: [4]),
-        throwsA(anything),
-      );
-      await second.close();
-      await dir.delete(recursive: true);
-    });
+        // Reopen: `done` is remembered (proj_meta). A brand-new field `priority`
+        // materializes on first query — no migration written.
+        final second = DriftSyncLocalStore(
+          SuperSyncDatabase(NativeDatabase(file)),
+        );
+        await second.initialize();
+        final byPriority = await second.queryProjection(
+          'todo',
+          const SyncQuerySpec(
+            conditions: [SyncCondition('priority', SyncFilterOp.eq, 7)],
+          ),
+        );
+        expect(byPriority.single.id, 'a');
+        await second.close();
+        await dir.delete(recursive: true);
+      },
+    );
+
+    test(
+      'mixed value types compare correctly (SQLite dynamic typing)',
+      () async {
+        final store = DriftSyncLocalStore(
+          SuperSyncDatabase(NativeDatabase.memory()),
+        );
+        await store.initialize();
+        await store.putRecord(_rec('a', {'id': 'a', 'score': 10}));
+        await store.putRecord(_rec('a2', {'id': 'a2', 'score': 3.5}));
+        final hi = await store.queryProjection(
+          'todo',
+          const SyncQuerySpec(
+            conditions: [SyncCondition('score', SyncFilterOp.gt, 5)],
+          ),
+        );
+        expect(hi.single.id, 'a');
+        await store.close();
+      },
+    );
   });
 }

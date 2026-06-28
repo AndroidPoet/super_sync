@@ -6,6 +6,7 @@ import 'package:super_sync/src/sync_local_store.dart';
 import 'package:super_sync/src/sync_mutation.dart';
 import 'package:super_sync/src/sync_operation.dart';
 import 'package:super_sync/src/sync_pager.dart';
+import 'package:super_sync/src/sync_query.dart';
 import 'package:super_sync/src/sync_queryable_store.dart';
 import 'package:super_sync/src/sync_record.dart';
 
@@ -50,21 +51,30 @@ abstract interface class SyncRepository<T> {
   /// Deletes the entity with [id]. Alias for [delete].
   Future<void> remove(String id);
 
-  /// Runs a typed query over projected columns and returns matching models.
+  /// Starts a typed query. Chain [SyncQuery.where] / [SyncQuery.orderBy] /
+  /// [SyncQuery.limit], then call [SyncQuery.get].
   ///
-  /// [where] / [orderBy] are SQL fragments over the field names you declared via
-  /// `collection(fields: ...)`; [args] fills `?` placeholders in [where]. Throws
-  /// [UnsupportedError] if the store can't project (e.g. the in-memory store) or
-  /// [StateError] if this type declared no fields.
+  /// Fields you reference are materialized into indexed columns on first use —
+  /// no schema declaration needed. Requires a queryable store (e.g. Drift);
+  /// throws [UnsupportedError] otherwise.
   ///
   /// ```dart
-  /// await todos.query(where: 'done = ?', args: [0], orderBy: 'priority DESC');
+  /// await todos.query().orderBy('priority', descending: true).get();
   /// ```
-  Future<List<T>> query({
-    String? where,
-    List<Object?> args,
-    String? orderBy,
-    int? limit,
+  SyncQuery<T> query();
+
+  /// Shorthand for `query().where(...)`.
+  SyncQuery<T> where(
+    String field, {
+    Object? isEqualTo,
+    Object? notEqualTo,
+    Object? greaterThan,
+    Object? greaterThanOrEqualTo,
+    Object? lessThan,
+    Object? lessThanOrEqualTo,
+    bool? isNull,
+    List<Object?>? whereIn,
+    String? like,
   });
 }
 
@@ -152,12 +162,7 @@ class DefaultSyncRepository<T> implements SyncRepository<T> {
   Future<void> remove(String id) => delete(id);
 
   @override
-  Future<List<T>> query({
-    String? where,
-    List<Object?> args = const [],
-    String? orderBy,
-    int? limit,
-  }) async {
+  SyncQuery<T> query() => SyncQuery<T>((spec) async {
     await _ready();
     final store = _store;
     if (store is! SyncQueryableStore) {
@@ -168,13 +173,35 @@ class DefaultSyncRepository<T> implements SyncRepository<T> {
     }
     final rows = await (store as SyncQueryableStore).queryProjection(
       _type,
-      where: where,
-      whereArgs: args,
-      orderBy: orderBy,
-      limit: limit,
+      spec,
     );
     return rows.map((r) => _decode(r.data)).toList();
-  }
+  });
+
+  @override
+  SyncQuery<T> where(
+    String field, {
+    Object? isEqualTo,
+    Object? notEqualTo,
+    Object? greaterThan,
+    Object? greaterThanOrEqualTo,
+    Object? lessThan,
+    Object? lessThanOrEqualTo,
+    bool? isNull,
+    List<Object?>? whereIn,
+    String? like,
+  }) => query().where(
+    field,
+    isEqualTo: isEqualTo,
+    notEqualTo: notEqualTo,
+    greaterThan: greaterThan,
+    greaterThanOrEqualTo: greaterThanOrEqualTo,
+    lessThan: lessThan,
+    lessThanOrEqualTo: lessThanOrEqualTo,
+    isNull: isNull,
+    whereIn: whereIn,
+    like: like,
+  );
 
   @override
   Future<void> save(T value) async {

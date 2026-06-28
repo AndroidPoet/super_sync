@@ -18,8 +18,9 @@ class DriftSyncLocalStore implements SyncLocalStore, SyncQueryableStore {
   /// The underlying Drift database.
   final SuperSyncDatabase db;
 
-  /// Configured projections, keyed by entity type.
-  final Map<String, SyncProjection> _projections = {};
+  /// Fields materialized into a typed column, keyed by entity type. Loaded from
+  /// `proj_meta` on [initialize] and grown lazily as queries touch new fields.
+  final Map<String, Set<String>> _materialized = {};
 
   // --- Mapping ---------------------------------------------------------------
 
@@ -86,7 +87,18 @@ class DriftSyncLocalStore implements SyncLocalStore, SyncQueryableStore {
 
   @override
   Future<void> initialize() async {
-    await db.customSelect('SELECT 1').get();
+    await db.customStatement(
+      'CREATE TABLE IF NOT EXISTS proj_meta ('
+      ' type TEXT NOT NULL, field TEXT NOT NULL, PRIMARY KEY(type, field))',
+    );
+    final rows = await db
+        .customSelect('SELECT type, field FROM proj_meta')
+        .get();
+    for (final r in rows) {
+      (_materialized[r.data['type']! as String] ??= {}).add(
+        r.data['field']! as String,
+      );
+    }
   }
 
   @override
@@ -360,132 +372,77 @@ class DriftSyncLocalStore implements SyncLocalStore, SyncQueryableStore {
     });
   }
 
-  // --- Typed projections -----------------------------------------------------
+  // --- Typed projections (lazy) ----------------------------------------------
 
   String _tableName(String type) => 'proj_${_sanitize(type)}';
   String _col(String name) => _sanitize(name);
   String _sanitize(String s) => s.replaceAll(RegExp('[^A-Za-z0-9_]'), '_');
 
-  String _sqlType(SyncFieldType t) => switch (t) {
-    SyncFieldType.text => 'TEXT',
-    SyncFieldType.integer => 'INTEGER',
-    // Booleans are stored as INTEGER 0/1.
-    SyncFieldType.boolean => 'INTEGER',
-    SyncFieldType.real => 'REAL',
-  };
-
-  Object? _extract(SyncField f, Object? raw) {
-    if (raw == null) return null;
-    return switch (f.type) {
-      SyncFieldType.text => raw.toString(),
-      SyncFieldType.integer => (raw as num).toInt(),
-      SyncFieldType.real => (raw as num).toDouble(),
-      SyncFieldType.boolean => (raw == true || raw == 1) ? 1 : 0,
-    };
-  }
-
   @override
   Future<void> configureProjections(List<SyncProjection> projections) async {
+    // Pre-warm: materialize declared fields now so the first query is fast.
     for (final proj in projections) {
-      _projections[proj.type] = proj;
-      await _migrateTable(proj);
+      for (final f in proj.fields) {
+        await _ensureField(proj.type, f.jsonKey);
+      }
     }
   }
 
-  /// Creates or migrates [proj]'s typed table. Additive changes (new columns)
-  /// are applied in place; any incompatible change rebuilds the table from the
-  /// JSON blob — so the caller never writes a migration.
-  Future<void> _migrateTable(SyncProjection proj) async {
-    final table = _tableName(proj.type);
-    final info = await db.customSelect("PRAGMA table_info('$table')").get();
-    final existing = <String, String>{
-      for (final row in info)
-        (row.data['name'] as String): (row.data['type'] as String)
-            .toUpperCase(),
-    };
-
-    final desired = <String, String>{'id': 'TEXT'};
-    for (final f in proj.fields) {
-      desired[_col(f.name)] = _sqlType(f.type);
-    }
-
-    if (existing.isEmpty) {
-      await _createTable(proj);
-      await _backfill(proj);
-      return;
-    }
-
-    // Compatible iff every existing column survives unchanged in the new shape.
-    final compatible = existing.entries.every(
-      (e) => desired[e.key] == e.value,
-    );
-    if (!compatible) {
-      await db.customStatement('DROP TABLE IF EXISTS $table');
-      await _createTable(proj);
-      await _backfill(proj);
-      return;
-    }
-
-    // Additive: add the new columns and backfill just those.
-    final added = desired.keys.where((c) => !existing.containsKey(c)).toList();
-    for (final c in added) {
-      await db.customStatement(
-        'ALTER TABLE $table ADD COLUMN $c ${desired[c]}',
-      );
-    }
-    await _createIndexes(proj);
-    if (added.isNotEmpty) await _backfill(proj);
-  }
-
-  Future<void> _createTable(SyncProjection proj) async {
-    final table = _tableName(proj.type);
-    final cols = <String>[
-      'id TEXT PRIMARY KEY',
-      for (final f in proj.fields) '${_col(f.name)} ${_sqlType(f.type)}',
-    ];
+  /// Materializes [field] (a JSON key) into an indexed column for [type] the
+  /// first time it's needed, backfilling it from the blob. Idempotent and
+  /// durable — the materialized set is recorded in `proj_meta`.
+  Future<void> _ensureField(String type, String field) async {
+    final set = _materialized[type] ??= {};
+    if (set.contains(field)) return;
+    final table = _tableName(type);
+    final col = _col(field);
+    // Column has no declared type: SQLite stores each value in its natural
+    // storage class, so ints/reals/text/bools all compare correctly.
     await db.customStatement(
-      'CREATE TABLE IF NOT EXISTS $table (${cols.join(', ')})',
+      'CREATE TABLE IF NOT EXISTS $table (id TEXT PRIMARY KEY)',
     );
-    await _createIndexes(proj);
+    await db.customStatement('ALTER TABLE $table ADD COLUMN $col');
+    await db.customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_${table}_$col ON $table($col)',
+    );
+    await db.customStatement(
+      'INSERT OR IGNORE INTO proj_meta (type, field) VALUES (?, ?)',
+      [type, field],
+    );
+    set.add(field);
+    await _backfill(type);
   }
 
-  Future<void> _createIndexes(SyncProjection proj) async {
-    final table = _tableName(proj.type);
-    for (final f in proj.fields) {
-      if (!f.indexed) continue;
-      final col = _col(f.name);
-      await db.customStatement(
-        'CREATE INDEX IF NOT EXISTS idx_${table}_$col ON $table($col)',
-      );
-    }
-  }
-
-  /// Rebuilds [proj]'s table contents from the blob — the source of truth.
-  Future<void> _backfill(SyncProjection proj) async {
-    final rows =
-        await (db.select(db.syncRecords)..where(
-              (t) => t.type.equals(proj.type) & t.deleted.equals(false),
-            ))
-            .get();
+  /// Re-projects every live record of [type] (fills any new column from blobs).
+  Future<void> _backfill(String type) async {
+    final rows = await (db.select(
+      db.syncRecords,
+    )..where((t) => t.type.equals(type) & t.deleted.equals(false))).get();
     for (final row in rows) {
       await _project(_rec(row));
     }
   }
 
-  /// Writes [record]'s projected columns (or removes the row if it's a
-  /// tombstone). No-op when the type has no configured projection.
+  Object? _storeValue(Object? raw) {
+    if (raw is bool) return raw ? 1 : 0;
+    if (raw is Map || raw is List) return null; // non-scalar: not queryable
+    return raw;
+  }
+
+  /// Writes [record]'s materialized columns (or removes the row if it's a
+  /// tombstone). No-op until at least one field has been materialized.
   Future<void> _project(SyncRecord record) async {
-    final proj = _projections[record.type];
-    if (proj == null) return;
+    final fields = _materialized[record.type];
+    if (fields == null || fields.isEmpty) return;
     final table = _tableName(record.type);
     if (record.deleted) {
       await db.customStatement('DELETE FROM $table WHERE id = ?', [record.id]);
       return;
     }
-    final cols = <String>['id', for (final f in proj.fields) _col(f.name)];
+    final cols = <String>['id', for (final f in fields) _col(f)];
     final values = <Object?>[
       record.id,
-      for (final f in proj.fields) _extract(f, record.data[f.jsonKey]),
+      for (final f in fields) _storeValue(record.data[f]),
     ];
     final placeholders = List.filled(cols.length, '?').join(', ');
     await db.customStatement(
@@ -495,7 +452,7 @@ class DriftSyncLocalStore implements SyncLocalStore, SyncQueryableStore {
   }
 
   Future<void> _unproject(String type, String id) async {
-    if (!_projections.containsKey(type)) return;
+    if ((_materialized[type] ?? const {}).isEmpty) return;
     await db.customStatement(
       'DELETE FROM ${_tableName(type)} WHERE id = ?',
       [id],
@@ -504,43 +461,78 @@ class DriftSyncLocalStore implements SyncLocalStore, SyncQueryableStore {
 
   @override
   Future<List<SyncRecord>> queryProjection(
-    String type, {
-    String? where,
-    List<Object?> whereArgs = const [],
-    String? orderBy,
-    int? limit,
-  }) async {
-    if (!_projections.containsKey(type)) {
-      throw StateError(
-        'No projection configured for "$type". Declare fields via '
-        'collection(fields: ...) or register(fields: ...).',
-      );
+    String type,
+    SyncQuerySpec spec,
+  ) async {
+    // No field filters: just read straight from the blob table.
+    if (spec.fields.isEmpty) {
+      final all = await readAll(type);
+      return spec.limit == null ? all : all.take(spec.limit!).toList();
     }
+
+    // Materialize every referenced field on first use.
+    for (final f in spec.fields) {
+      await _ensureField(type, f);
+    }
+
     final table = _tableName(type);
     final sql = StringBuffer(
       'SELECT r.type AS type, r.id AS id, r.data_json AS data_json, '
       'r.local_version AS local_version, r.server_version AS server_version, '
-      'r.deleted AS deleted, r.updated_at AS updated_at '
+      'r.updated_at AS updated_at '
       'FROM $table p JOIN sync_records r ON r.id = p.id AND r.type = ? '
       'WHERE r.deleted = 0',
     );
     final vars = <Variable<Object>>[Variable.withString(type)];
-    if (where != null && where.isNotEmpty) {
-      sql.write(' AND ($where)');
-      for (final a in whereArgs) {
-        vars.add(_variable(a));
+
+    for (final c in spec.conditions) {
+      final col = 'p.${_col(c.field)}';
+      switch (c.op) {
+        case SyncFilterOp.isNull:
+          sql.write(' AND $col IS NULL');
+        case SyncFilterOp.notNull:
+          sql.write(' AND $col IS NOT NULL');
+        case SyncFilterOp.inList:
+          final list = (c.value! as List).cast<Object?>();
+          if (list.isEmpty) {
+            sql.write(' AND 0');
+            break;
+          }
+          sql.write(
+            ' AND $col IN (${List.filled(list.length, '?').join(', ')})',
+          );
+          for (final v in list) {
+            vars.add(_variable(v));
+          }
+        case SyncFilterOp.eq:
+        case SyncFilterOp.ne:
+        case SyncFilterOp.gt:
+        case SyncFilterOp.gte:
+        case SyncFilterOp.lt:
+        case SyncFilterOp.lte:
+        case SyncFilterOp.like:
+          sql.write(' AND $col ${_opSql(c.op)} ?');
+          vars.add(_variable(c.value));
       }
     }
-    if (orderBy != null && orderBy.isNotEmpty) sql.write(' ORDER BY $orderBy');
-    if (limit != null) sql.write(' LIMIT $limit');
+
+    if (spec.orders.isNotEmpty) {
+      sql
+        ..write(' ORDER BY ')
+        ..write(
+          spec.orders
+              .map((o) => 'p.${_col(o.field)} ${o.descending ? 'DESC' : 'ASC'}')
+              .join(', '),
+        );
+    }
+    if (spec.limit != null) sql.write(' LIMIT ${spec.limit}');
 
     final rows = await db.customSelect(sql.toString(), variables: vars).get();
     return rows.map((row) {
-      final data = row.read<String>('data_json');
       return SyncRecord(
         type: row.read<String>('type'),
         id: row.read<String>('id'),
-        data: jsonDecode(data) as Map<String, Object?>,
+        data: jsonDecode(row.read<String>('data_json')) as Map<String, Object?>,
         localVersion: row.read<int>('local_version'),
         serverVersion: row.readNullable<int>('server_version'),
         updatedAt: DateTime.fromMillisecondsSinceEpoch(
@@ -549,6 +541,19 @@ class DriftSyncLocalStore implements SyncLocalStore, SyncQueryableStore {
       );
     }).toList();
   }
+
+  String _opSql(SyncFilterOp op) => switch (op) {
+    SyncFilterOp.eq => '=',
+    SyncFilterOp.ne => '<>',
+    SyncFilterOp.gt => '>',
+    SyncFilterOp.gte => '>=',
+    SyncFilterOp.lt => '<',
+    SyncFilterOp.lte => '<=',
+    SyncFilterOp.like => 'LIKE',
+    SyncFilterOp.inList ||
+    SyncFilterOp.isNull ||
+    SyncFilterOp.notNull => throw ArgumentError('handled separately'),
+  };
 
   Variable<Object> _variable(Object? value) => switch (value) {
     null => const Variable<String>(null),
