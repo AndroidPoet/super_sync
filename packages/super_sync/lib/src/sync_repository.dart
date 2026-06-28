@@ -37,6 +37,17 @@ abstract interface class SyncRepository<T> {
 
   /// Forces a sync cycle now.
   Future<void> sync();
+
+  // --- Plain-API aliases (read like a normal remote client) ----------------
+
+  /// Reads all live entities once. Alias for [getAll].
+  Future<List<T>> all();
+
+  /// A reactive list of all live entities. Alias for [watchAll].
+  Stream<List<T>> stream();
+
+  /// Deletes the entity with [id]. Alias for [delete].
+  Future<void> remove(String id);
 }
 
 /// The default [SyncRepository] over a [SyncLocalStore] and [SyncEngine].
@@ -47,15 +58,25 @@ class DefaultSyncRepository<T> implements SyncRepository<T> {
     required SyncLocalStore store,
     required SyncEngine engine,
     bool autoSync = true,
+    Future<void> Function()? ensureStarted,
   }) : _entity = entity,
        _store = store,
        _engine = engine,
-       _autoSync = autoSync;
+       _autoSync = autoSync,
+       _ensureStarted = ensureStarted;
 
   final RegisteredEntity _entity;
   final SyncLocalStore _store;
   final SyncEngine _engine;
   final bool _autoSync;
+  final Future<void> Function()? _ensureStarted;
+
+  /// Lazily opens the store/engine on first use, so callers never have to call
+  /// `start()` themselves — the local database stays invisible.
+  Future<void> _ready() async {
+    final ensure = _ensureStarted;
+    if (ensure != null) await ensure();
+  }
 
   static int _seq = 0;
   String _newId(String entityId) =>
@@ -65,14 +86,20 @@ class DefaultSyncRepository<T> implements SyncRepository<T> {
   T _decode(Map<String, Object?> data) => _entity.decode(data) as T;
 
   @override
-  Stream<List<T>> watchAll() => _store
-      .watchAll(_type)
-      .map((rows) => rows.map((r) => _decode(r.data)).toList());
+  Stream<List<T>> watchAll() async* {
+    await _ready();
+    yield* _store
+        .watchAll(_type)
+        .map((rows) => rows.map((r) => _decode(r.data)).toList());
+  }
 
   @override
-  Stream<T?> watch(String id) => _store
-      .watchRecord(_type, id)
-      .map((r) => r == null ? null : _decode(r.data));
+  Stream<T?> watch(String id) async* {
+    await _ready();
+    yield* _store
+        .watchRecord(_type, id)
+        .map((r) => r == null ? null : _decode(r.data));
+  }
 
   @override
   SyncPager<T> paged({int pageSize = 30}) => SyncPager<T>(
@@ -80,22 +107,35 @@ class DefaultSyncRepository<T> implements SyncRepository<T> {
     type: _type,
     decode: _decode,
     pageSize: pageSize,
+    ensureStarted: _ensureStarted,
   );
 
   @override
   Future<List<T>> getAll() async {
+    await _ready();
     final rows = await _store.readAll(_type);
     return rows.map((r) => _decode(r.data)).toList();
   }
 
   @override
   Future<T?> get(String id) async {
+    await _ready();
     final r = await _store.readRecord(_type, id);
     return (r == null || r.deleted) ? null : _decode(r.data);
   }
 
   @override
+  Future<List<T>> all() => getAll();
+
+  @override
+  Stream<List<T>> stream() => watchAll();
+
+  @override
+  Future<void> remove(String id) => delete(id);
+
+  @override
   Future<void> save(T value) async {
+    await _ready();
     final data = _entity.encode(value);
     final id = _entity.idOf(value);
     final existing = await _store.readRecord(_type, id);
@@ -133,6 +173,7 @@ class DefaultSyncRepository<T> implements SyncRepository<T> {
 
   @override
   Future<void> delete(String id) async {
+    await _ready();
     final existing = await _store.readRecord(_type, id);
     if (existing == null) return;
     final record = existing.copyWith(
@@ -157,7 +198,10 @@ class DefaultSyncRepository<T> implements SyncRepository<T> {
   }
 
   @override
-  Future<void> sync() => _engine.sync();
+  Future<void> sync() async {
+    await _ready();
+    await _engine.sync();
+  }
 
   void _triggerSync() {
     if (_autoSync) unawaited(_engine.sync());

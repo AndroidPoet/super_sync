@@ -9,20 +9,29 @@ import 'package:super_sync/src/sync_remote.dart';
 import 'package:super_sync/src/sync_repository.dart';
 import 'package:super_sync/src/sync_status.dart';
 
-/// The entry point: register any number of models, then read/write each through
-/// a typed [SyncRepository] while the engine syncs them generically.
+/// The entry point. Declare a [collection] per model and use it like a normal
+/// remote API — reads are instant and offline, writes sync in the background,
+/// and the local database stays invisible.
+///
+/// The simple path — no adapter class, no `register`, no `start`:
 ///
 /// ```dart
-/// final sync = SuperSync(store: InMemorySyncLocalStore(), remote: myRemote)
-///   ..register(TodoSyncAdapter())
-///   ..register(UserSyncAdapter())
-///   ..register(MessageSyncAdapter());
-/// await sync.start();
+/// final db = SuperSync(store: store, remote: myRemote);
 ///
-/// final todos = sync.repository<Todo>();
-/// await todos.save(todo);
-/// todos.watchAll();
+/// final todos = db.collection<Todo>(
+///   id: (t) => t.id,
+///   toJson: (t) => t.toJson(),
+///   fromJson: Todo.fromJson,
+/// );
+///
+/// await todos.save(Todo(id: 't1', title: 'Buy milk')); // instant, offline-ok
+/// final all = await todos.all();                        // local, instant
+/// todos.stream().listen(render);                        // reactive
 /// ```
+///
+/// The first call to any collection method opens the store and starts syncing
+/// automatically. Prefer to wire adapters explicitly? [register] and [start]
+/// are still available.
 class SuperSync {
   /// Creates a Super Sync instance over [store] and [remote].
   SuperSync({
@@ -48,6 +57,11 @@ class SuperSync {
   final bool _autoSync;
   late final SyncEngine _engine;
   bool _started = false;
+  Future<void>? _startup;
+
+  /// Opens the store/engine exactly once, memoizing the result, so the first
+  /// use of any collection transparently starts everything.
+  Future<void> _ensureStarted() => _startup ??= start();
 
   /// Registers [adapter], optionally with a per-entity [conflictResolver].
   /// Call before [start].
@@ -59,6 +73,44 @@ class SuperSync {
       throw StateError('Register all adapters before calling start().');
     }
     _registry.register<T>(adapter, resolver: conflictResolver);
+  }
+
+  /// Declares a synced collection for model [T] with inline JSON — no adapter
+  /// class, no `register`, no `start`.
+  ///
+  /// [id] extracts the entity's stable id, [toJson] / [fromJson] (re)serialize
+  /// it. [type] is the wire type name; it defaults to the model's type name, but
+  /// pass it explicitly if you obfuscate/minify, since the name must stay stable
+  /// across releases. Returns the typed [SyncRepository]; calling [collection]
+  /// again for the same [T] returns the same repository.
+  ///
+  /// ```dart
+  /// final todos = db.collection<Todo>(
+  ///   id: (t) => t.id,
+  ///   toJson: (t) => t.toJson(),
+  ///   fromJson: Todo.fromJson,
+  /// );
+  /// ```
+  SyncRepository<T> collection<T>({
+    required String Function(T value) id,
+    required Map<String, Object?> Function(T value) toJson,
+    required T Function(Map<String, Object?> json) fromJson,
+    String? type,
+    ConflictResolver<T>? conflictResolver,
+  }) {
+    final wireType = type ?? T.toString();
+    if (_registry.byName(wireType) == null) {
+      _registry.register<T>(
+        _InlineAdapter<T>(
+          type: wireType,
+          id: id,
+          toJson: toJson,
+          fromJson: fromJson,
+        ),
+        resolver: conflictResolver,
+      );
+    }
+    return repository<T>();
   }
 
   /// Opens the store. Idempotent.
@@ -79,6 +131,7 @@ class SuperSync {
             store: _store,
             engine: _engine,
             autoSync: _autoSync,
+            ensureStarted: _ensureStarted,
           ),
         )
         as SyncRepository<T>;
@@ -103,4 +156,32 @@ class SuperSync {
     await _engine.dispose();
     await _store.close();
   }
+}
+
+/// An adapter built from inline closures, so a model needs no adapter class.
+/// Backs [SuperSync.collection].
+class _InlineAdapter<T> implements SyncEntityAdapter<T> {
+  _InlineAdapter({
+    required this.type,
+    required String Function(T value) id,
+    required Map<String, Object?> Function(T value) toJson,
+    required T Function(Map<String, Object?> json) fromJson,
+  }) : _id = id,
+       _toJson = toJson,
+       _fromJson = fromJson;
+
+  @override
+  final String type;
+  final String Function(T value) _id;
+  final Map<String, Object?> Function(T value) _toJson;
+  final T Function(Map<String, Object?> json) _fromJson;
+
+  @override
+  String idOf(T value) => _id(value);
+
+  @override
+  Map<String, Object?> encode(T value) => _toJson(value);
+
+  @override
+  T decode(Map<String, Object?> data) => _fromJson(data);
 }

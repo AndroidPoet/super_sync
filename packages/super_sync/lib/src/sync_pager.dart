@@ -44,10 +44,12 @@ class SyncPager<T> {
     required String type,
     required T Function(Map<String, Object?> data) decode,
     int pageSize = 30,
+    Future<void> Function()? ensureStarted,
   }) : _store = store,
        _type = type,
        _decode = decode,
        _pageSize = pageSize,
+       _ensureStarted = ensureStarted,
        _window = pageSize {
     _out = StreamController<SyncPage<T>>.broadcast(
       onListen: _start,
@@ -59,6 +61,7 @@ class SyncPager<T> {
   final String _type;
   final T Function(Map<String, Object?> data) _decode;
   final int _pageSize;
+  final Future<void> Function()? _ensureStarted;
 
   int _window;
   late final StreamController<SyncPage<T>> _out;
@@ -79,6 +82,12 @@ class SyncPager<T> {
   SyncPage<T> get value => _last;
 
   void _start() {
+    unawaited(_bind());
+  }
+
+  Future<void> _bind() async {
+    final ensure = _ensureStarted;
+    if (ensure != null) await ensure();
     _sub ??= _store.watchAll(_type).listen((_) => unawaited(_recompute()));
   }
 
