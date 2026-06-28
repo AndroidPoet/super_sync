@@ -1,6 +1,7 @@
 import 'package:meta/meta.dart';
 import 'package:super_sync/src/sync_conflict.dart';
 import 'package:super_sync/src/sync_entity_adapter.dart';
+import 'package:super_sync/src/sync_projection.dart';
 
 /// A type-erased view of a registered adapter, so the engine can encode,
 /// decode, identify and resolve conflicts on records without statically knowing
@@ -13,6 +14,7 @@ class RegisteredEntity {
     required this.decode,
     required this.idOf,
     required this.resolveData,
+    required this.fields,
   });
 
   /// Creates a registration from a typed [adapter] and optional [resolver],
@@ -20,12 +22,14 @@ class RegisteredEntity {
   static RegisteredEntity from<T>(
     SyncEntityAdapter<T> adapter, {
     ConflictResolver<T>? resolver,
+    List<SyncField>? fields,
   }) {
     return RegisteredEntity._(
       type: adapter.type,
       encode: (value) => adapter.encode(value as T),
       idOf: (value) => adapter.idOf(value as T),
       decode: adapter.decode,
+      fields: fields,
       resolveData: resolver == null
           ? null
           : (local, remote) async {
@@ -40,6 +44,9 @@ class RegisteredEntity {
 
   /// The entity type name.
   final String type;
+
+  /// The fields to project into typed columns, or `null` for blob-only.
+  final List<SyncField>? fields;
 
   /// Encodes a model (passed as `Object?`) to a data map.
   final Map<String, Object?> Function(Object? value) encode;
@@ -70,6 +77,7 @@ class AdapterRegistry {
   void register<T>(
     SyncEntityAdapter<T> adapter, {
     ConflictResolver<T>? resolver,
+    List<SyncField>? fields,
   }) {
     if (_byName.containsKey(adapter.type)) {
       throw StateError(
@@ -77,7 +85,11 @@ class AdapterRegistry {
         'registered.',
       );
     }
-    final entity = RegisteredEntity.from<T>(adapter, resolver: resolver);
+    final entity = RegisteredEntity.from<T>(
+      adapter,
+      resolver: resolver,
+      fields: fields,
+    );
     _byName[adapter.type] = entity;
     _byType[T] = entity;
   }
@@ -99,4 +111,11 @@ class AdapterRegistry {
 
   /// Every registered type name.
   Set<String> get typeNames => _byName.keys.toSet();
+
+  /// A [SyncProjection] for every registered type that declared [fields].
+  List<SyncProjection> get projections => [
+    for (final e in _byName.values)
+      if (e.fields != null && e.fields!.isNotEmpty)
+        SyncProjection(type: e.type, fields: e.fields!),
+  ];
 }

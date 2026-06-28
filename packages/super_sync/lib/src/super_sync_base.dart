@@ -5,6 +5,8 @@ import 'package:super_sync/src/sync_conflict.dart';
 import 'package:super_sync/src/sync_engine.dart';
 import 'package:super_sync/src/sync_entity_adapter.dart';
 import 'package:super_sync/src/sync_local_store.dart';
+import 'package:super_sync/src/sync_projection.dart';
+import 'package:super_sync/src/sync_queryable_store.dart';
 import 'package:super_sync/src/sync_remote.dart';
 import 'package:super_sync/src/sync_repository.dart';
 import 'package:super_sync/src/sync_status.dart';
@@ -68,11 +70,12 @@ class SuperSync {
   void register<T>(
     SyncEntityAdapter<T> adapter, {
     ConflictResolver<T>? conflictResolver,
+    List<SyncField>? fields,
   }) {
     if (_started) {
       throw StateError('Register all adapters before calling start().');
     }
-    _registry.register<T>(adapter, resolver: conflictResolver);
+    _registry.register<T>(adapter, resolver: conflictResolver, fields: fields);
   }
 
   /// Declares a synced collection for model [T] with inline JSON — no adapter
@@ -97,6 +100,7 @@ class SuperSync {
     required T Function(Map<String, Object?> json) fromJson,
     String? type,
     ConflictResolver<T>? conflictResolver,
+    List<SyncField>? fields,
   }) {
     final wireType = type ?? T.toString();
     if (_registry.byName(wireType) == null) {
@@ -108,6 +112,7 @@ class SuperSync {
           fromJson: fromJson,
         ),
         resolver: conflictResolver,
+        fields: fields,
       );
     }
     return repository<T>();
@@ -117,6 +122,11 @@ class SuperSync {
   Future<void> start() async {
     if (_started) return;
     await _store.initialize();
+    final store = _store;
+    final projections = _registry.projections;
+    if (store is SyncQueryableStore && projections.isNotEmpty) {
+      await (store as SyncQueryableStore).configureProjections(projections);
+    }
     await _engine.refreshCounts();
     _started = true;
   }
